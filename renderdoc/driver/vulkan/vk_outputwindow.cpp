@@ -1257,7 +1257,7 @@ uint64_t VulkanReplay::MakeOutputWindow(WindowingData window, bool depth)
     m_OutputWindows[id].width = w;
     m_OutputWindows[id].height = h;
 
-    m_OutputWindows[id].Create(m_pDriver, m_pDriver->GetDev(), depth);
+    //m_OutputWindows[id].Create(m_pDriver, m_pDriver->GetDev(), depth);
   }
 
   return id;
