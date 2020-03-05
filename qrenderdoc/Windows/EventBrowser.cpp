@@ -45,12 +45,14 @@ struct EventItemTag
   EventItemTag() = default;
   EventItemTag(uint32_t eventId) : EID(eventId), lastEID(eventId) {}
   EventItemTag(uint32_t eventId, uint32_t lastEventID) : EID(eventId), lastEID(lastEventID) {}
+  EventItemTag(uint32_t eventId, uint32_t lastEventID, DrawFlags f) : EID(eventId), lastEID(lastEventID), flags(f) {}
   uint32_t EID = 0;
   uint32_t lastEID = 0;
   double duration = -1.0;
   bool current = false;
   bool find = false;
   bool bookmark = false;
+  DrawFlags flags = DrawFlags::NoFlags;
 };
 
 Q_DECLARE_METATYPE(EventItemTag);
@@ -383,7 +385,7 @@ QPair<uint32_t, uint32_t> EventBrowser::AddDrawcalls(RDTreeWidgetItem *parent,
         lastEID = draws[i + 1].eventId;
     }
 
-    child->setTag(QVariant::fromValue(EventItemTag(draws[i].eventId, lastEID)));
+    child->setTag(QVariant::fromValue(EventItemTag(draws[i].eventId, lastEID, d.flags)));
 
     if(m_Ctx.Config().EventBrowser_ApplyColors)
     {
@@ -449,14 +451,21 @@ void EventBrowser::SetDrawcallTimes(RDTreeWidgetItem *node, const rdcarray<Count
     return;
   }
 
+  bool in_renderpass = false;
   for(int i = 0; i < node->childCount(); i++)
   {
     SetDrawcallTimes(node->child(i), results);
 
     double nd = node->child(i)->tag().value<EventItemTag>().duration;
 
-    if(nd > 0.0)
+    if (node->child(i)->tag().value<EventItemTag>().flags & DrawFlags::EndPass)
+      in_renderpass = false;
+
+    if(nd > 0.0 && !in_renderpass)
       duration += nd;
+
+    if (node->child(i)->tag().value<EventItemTag>().flags & DrawFlags::BeginPass && nd > 0.0)
+      in_renderpass = true;
   }
 
   double secs = duration;
@@ -814,11 +823,22 @@ double EventBrowser::GetDrawTime(const DrawcallDescription &drawcall)
   {
     double total = 0.0;
 
+    bool in_renderpass = false;
+
     for(const DrawcallDescription &d : drawcall.children)
     {
       double f = GetDrawTime(d);
-      if(f >= 0)
+      
+      if(d.flags & DrawFlags::EndPass) 
+        in_renderpass = false;
+      
+      if(f > 0.0 && !in_renderpass) {
         total += f;
+      }
+
+      if((d.flags & DrawFlags::BeginPass) && (f > 0.0)) 
+        in_renderpass = true;
+
     }
 
     return total;

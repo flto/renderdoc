@@ -706,6 +706,20 @@ struct VulkanGPUTimerCallback : public VulkanDrawcallCallback
     m_pDriver->SetDrawcallCB(this);
   }
   ~VulkanGPUTimerCallback() { m_pDriver->SetDrawcallCB(NULL); }
+
+  bool _PostDraw(uint32_t eid, VkCommandBuffer cmd, DrawFlags flags)
+  {
+    ObjDisp(cmd)->CmdWriteTimestamp(Unwrap(cmd), VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                                    m_TimeStampQueryPool, (uint32_t)(m_Results.size() * 2 + 1));
+    if(m_OcclusionQueryPool != VK_NULL_HANDLE)
+      ObjDisp(cmd)->CmdEndQuery(Unwrap(cmd), m_OcclusionQueryPool, (uint32_t)m_Results.size());
+    if(m_PipeStatsQueryPool != VK_NULL_HANDLE)
+      ObjDisp(cmd)->CmdEndQuery(Unwrap(cmd), m_PipeStatsQueryPool, (uint32_t)m_Results.size());
+    m_Results.push_back(eid);
+    m_Flags.push_back(flags);
+    return false;
+  }
+
   void PreDraw(uint32_t eid, VkCommandBuffer cmd) override
   {
     if(m_OcclusionQueryPool != VK_NULL_HANDLE)
@@ -719,32 +733,25 @@ struct VulkanGPUTimerCallback : public VulkanDrawcallCallback
 
   bool PostDraw(uint32_t eid, VkCommandBuffer cmd) override
   {
-    ObjDisp(cmd)->CmdWriteTimestamp(Unwrap(cmd), VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
-                                    m_TimeStampQueryPool, (uint32_t)(m_Results.size() * 2 + 1));
-    if(m_OcclusionQueryPool != VK_NULL_HANDLE)
-      ObjDisp(cmd)->CmdEndQuery(Unwrap(cmd), m_OcclusionQueryPool, (uint32_t)m_Results.size());
-    if(m_PipeStatsQueryPool != VK_NULL_HANDLE)
-      ObjDisp(cmd)->CmdEndQuery(Unwrap(cmd), m_PipeStatsQueryPool, (uint32_t)m_Results.size());
-    m_Results.push_back(eid);
-    return false;
+    return _PostDraw(eid, cmd, DrawFlags::Drawcall);
   }
 
   void PostRedraw(uint32_t eid, VkCommandBuffer cmd) override {}
   // we don't need to distinguish, call the Draw functions
   void PreDispatch(uint32_t eid, VkCommandBuffer cmd) override { PreDraw(eid, cmd); }
-  bool PostDispatch(uint32_t eid, VkCommandBuffer cmd) override { return PostDraw(eid, cmd); }
+  bool PostDispatch(uint32_t eid, VkCommandBuffer cmd) override { return _PostDraw(eid, cmd, DrawFlags::Dispatch); }
   void PostRedispatch(uint32_t eid, VkCommandBuffer cmd) override { PostRedraw(eid, cmd); }
   void PreMisc(uint32_t eid, DrawFlags flags, VkCommandBuffer cmd) override
   {
-    if(flags & DrawFlags::PassBoundary)
-      return;
+    //if(flags & DrawFlags::PassBoundary && !(flags & DrawFlags::BeginPass))
+    //  return;
     PreDraw(eid, cmd);
   }
   bool PostMisc(uint32_t eid, DrawFlags flags, VkCommandBuffer cmd) override
   {
-    if(flags & DrawFlags::PassBoundary)
-      return false;
-    return PostDraw(eid, cmd);
+    //if(flags & DrawFlags::PassBoundary && !(flags & DrawFlags::EndPass))
+    //  return false;
+    return _PostDraw(eid, cmd, flags);
   }
   void PostRemisc(uint32_t eid, DrawFlags flags, VkCommandBuffer cmd) override
   {
@@ -764,6 +771,7 @@ struct VulkanGPUTimerCallback : public VulkanDrawcallCallback
   VkQueryPool m_OcclusionQueryPool;
   VkQueryPool m_PipeStatsQueryPool;
   rdcarray<uint32_t> m_Results;
+  rdcarray<DrawFlags> m_Flags;
   // events which are the 'same' from being the same command buffer resubmitted
   // multiple times in the frame. We will only get the full callback when we're
   // recording the command buffer, and will be given the first EID. After that
@@ -936,6 +944,9 @@ rdcarray<CounterResult> VulkanReplay::FetchCounters(const rdcarray<GPUCounter> &
 
   for(size_t i = 0; i < cb.m_Results.size(); i++)
   {
+    if (cb.m_Flags[i] & DrawFlags::EndPass)
+      continue;
+
     for(size_t c = 0; c < vkCounters.size(); c++)
     {
       CounterResult result;
@@ -948,6 +959,11 @@ rdcarray<CounterResult> VulkanReplay::FetchCounters(const rdcarray<GPUCounter> &
         case GPUCounter::EventGPUDuration:
         {
           uint64_t delta = m_TimeStampData[i * 2 + 1] - m_TimeStampData[i * 2 + 0];
+          if (cb.m_Flags[i] & DrawFlags::BeginPass) {
+            size_t j = i;
+            while (!(cb.m_Flags[j] & DrawFlags::EndPass)) j++;
+            delta = m_TimeStampData[j * 2 + 1] - m_TimeStampData[i * 2 + 0];
+          }
           result.value.d = (double(m_pDriver->GetDeviceProps().limits.timestampPeriod) *
                             double(delta))                  // nanoseconds
                            / (1000.0 * 1000.0 * 1000.0);    // to seconds
