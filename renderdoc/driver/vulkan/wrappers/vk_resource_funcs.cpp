@@ -1904,6 +1904,11 @@ bool WrappedVulkan::Serialise_vkCreateImageView(SerialiserType &ser, VkDevice de
 
     VkImageViewCreateInfo unwrappedInfo = CreateInfo;
     unwrappedInfo.image = Unwrap(unwrappedInfo.image);
+
+   byte *tempMem = GetTempMemory(GetNextPatchSize(unwrappedInfo.pNext));
+
+  UnwrapNextChain(m_State, "VkImageViewCreateInfo", tempMem, (VkBaseInStructure *)&unwrappedInfo);
+
     VkResult ret = ObjDisp(device)->CreateImageView(Unwrap(device), &unwrappedInfo, NULL, &view);
 
     APIProps.YUVTextures |= IsYUVFormat(CreateInfo.format);
@@ -1950,6 +1955,11 @@ VkResult WrappedVulkan::vkCreateImageView(VkDevice device, const VkImageViewCrea
 {
   VkImageViewCreateInfo unwrappedInfo = *pCreateInfo;
   unwrappedInfo.image = Unwrap(unwrappedInfo.image);
+
+   byte *tempMem = GetTempMemory(GetNextPatchSize(unwrappedInfo.pNext));
+
+  UnwrapNextChain(m_State, "VkImageViewCreateInfo", tempMem, (VkBaseInStructure *)&unwrappedInfo);
+
   VkResult ret;
   SERIALISE_TIME_CALL(
       ret = ObjDisp(device)->CreateImageView(Unwrap(device), &unwrappedInfo, pAllocator, pView));
